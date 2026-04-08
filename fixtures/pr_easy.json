@@ -1,0 +1,33 @@
+{
+  "pr_id": 4821,
+  "title": "Fix off-by-one error in chunk_list slicing",
+  "description": "The `chunk_list` utility was returning the last chunk with one fewer element than expected when the input length wasn't evenly divisible by chunk size. Root cause: the end index in the slice used `<` instead of `<=` for the final iteration. This caused downstream pagination to silently drop the last item on certain page sizes.\n\nFixed by correcting the slice boundary and added a targeted unit test.",
+  "diff": "diff --git a/utils/list_helpers.py b/utils/list_helpers.py\nindex 3a7f2b1..e9c4d58 100644\n--- a/utils/list_helpers.py\n+++ b/utils/list_helpers.py\n@@ -12,7 +12,7 @@ def chunk_list(items: list, chunk_size: int) -> list[list]:\n     chunks = []\n     for i in range(0, len(items), chunk_size):\n-        chunks.append(items[i:i + chunk_size - 1])\n+        chunks.append(items[i:i + chunk_size])\n     return chunks\n \n \ndiff --git a/tests/test_list_helpers.py b/tests/test_list_helpers.py\nindex 0000000..a1b2c3d 100644\n--- /dev/null\n+++ b/tests/test_list_helpers.py\n@@ -0,0 +1,9 @@\n+import pytest\n+from utils.list_helpers import chunk_list\n+\n+\n+def test_chunk_list_no_item_dropped():\n+    items = list(range(10))\n+    result = chunk_list(items, 3)\n+    flat = [x for sub in result for x in sub]\n+    assert flat == items, \"All items must be preserved after chunking\"",
+  "comments": [
+    "alice: LGTM, nice catch. The off-by-one was subtle — I've run into the same issue before with manual slicing.",
+    "bob: Clean fix. The test covers the edge case well. Approve."
+  ],
+  "files_changed": [
+    "utils/list_helpers.py",
+    "tests/test_list_helpers.py"
+  ],
+  "author": "jchen",
+  "base_branch": "main",
+  "additions": 10,
+  "deletions": 1,
+  "contexts": {
+    "file_tree": "utils/\n├── __init__.py\n├── list_helpers.py          (modified)\n├── string_helpers.py\n└── date_helpers.py\ntests/\n├── test_list_helpers.py     (new)\n├── test_string_helpers.py\n└── test_date_helpers.py",
+    "ci_status": "CI Pipeline: ALL PASSED\n  ✓ lint (pylint) ........... 0 warnings\n  ✓ type-check (mypy) ...... passed\n  ✓ unit-tests (pytest) .... 47/47 passed (1 new)\n  ✓ integration-tests ...... 12/12 passed\n  ✓ coverage ............... 94.2% → 96.1% (+1.9%)",
+    "git_blame": "utils/list_helpers.py:\n  Lines 1-20: jchen (3 months ago) — 'Add chunk_list utility for pagination'\n  The function has been stable since initial commit. No prior bug reports.",
+    "related_prs": "No related PRs found. This is a standalone utility fix.",
+    "test_coverage": "Coverage report for utils/list_helpers.py:\n  Before: 82% (chunk_list edge cases not covered)\n  After:  100% (new test covers chunking with remainder)\n  Overall project coverage: 94.2% → 96.1%"
+  },
+  "gold": {
+    "decision": "approve",
+    "labels": ["bug", "trivial"],
+    "priority": "low",
+    "gold_keywords": ["off-by-one", "slice", "fix"],
+    "relevant_contexts": [],
+    "depth_keywords": ["chunk_size", "boundary", "pagination"]
+  }
+}

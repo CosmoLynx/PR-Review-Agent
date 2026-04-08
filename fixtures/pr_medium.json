@@ -1,0 +1,35 @@
+{
+  "pr_id": 7293,
+  "title": "Refactor auth middleware — remove legacy token refresh logic",
+  "description": "Cleans up the authentication middleware by removing the legacy token refresh path that was added for the v1 API migration two years ago. The v1 endpoints have been fully decommissioned, so this code path is dead. This simplifies the middleware and removes ~30 lines of unused branching.\n\nNo behavioral changes expected. All existing tests pass.",
+  "diff": "diff --git a/src/auth/middleware.py b/src/auth/middleware.py\nindex 8d4e1f2..b3c7a90 100644\n--- a/src/auth/middleware.py\n+++ b/src/auth/middleware.py\n@@ -1,6 +1,5 @@\n import time\n import logging\n-from datetime import datetime, timedelta\n from typing import Optional\n \n from fastapi import Request, HTTPException\n@@ -18,22 +17,8 @@ class AuthMiddleware:\n \n     async def __call__(self, request: Request, call_next):\n         token = request.headers.get(\"Authorization\", \"\").removeprefix(\"Bearer \")\n-        if not token:\n+        if not token or not self._validate_token_signature(token):\n             raise HTTPException(status_code=401, detail=\"Missing token\")\n \n-        payload = self._decode_token(token)\n-        if payload is None:\n-            raise HTTPException(status_code=401, detail=\"Invalid token\")\n-\n-        # Check token expiry and refresh if within grace window\n-        exp = datetime.utcfromtimestamp(payload.get(\"exp\", 0))\n-        now = datetime.utcnow()\n-        if exp < now:\n-            raise HTTPException(status_code=401, detail=\"Token expired\")\n-        if exp - now < timedelta(minutes=5):\n-            new_token = self._refresh_token(payload)\n-            request.state.refreshed_token = new_token\n-\n-        request.state.user_id = payload[\"sub\"]\n+        request.state.user_id = self._extract_sub(token)\n         response = await call_next(request)\n         return response\n@@ -45,6 +30,10 @@ class AuthMiddleware:\n         except jwt.InvalidTokenError:\n             return None\n \n+    def _validate_token_signature(self, token: str) -> bool:\n+        \"\"\"Validates JWT signature only — does NOT check expiry.\"\"\"\n+        payload = self._decode_token(token)\n+        return payload is not None\n+\n+    def _extract_sub(self, token: str) -> str:\n+        payload = self._decode_token(token)\n+        return payload[\"sub\"]\n+\n     def _refresh_token(self, payload: dict) -> str:\n         payload[\"exp\"] = int(time.time()) + 3600\n         return jwt.encode(payload, self.secret, algorithm=\"HS256\")\ndiff --git a/tests/test_auth.py b/tests/test_auth.py\nindex 1a2b3c4..5d6e7f8 100644\n--- a/tests/test_auth.py\n+++ b/tests/test_auth.py\n@@ -22,15 +22,6 @@ class TestAuthMiddleware:\n         response = client.get(\"/protected\", headers={\"Authorization\": f\"Bearer {token}\"})\n         assert response.status_code == 200\n \n-    def test_expired_token_returns_401(self):\n-        \"\"\"Expired tokens should be rejected.\"\"\"\n-        expired_token = create_test_token(exp_minutes=-10)\n-        response = client.get(\"/protected\", headers={\"Authorization\": f\"Bearer {expired_token}\"})\n-        assert response.status_code == 401\n-\n-    def test_near_expiry_token_gets_refreshed(self):\n-        \"\"\"Tokens within 5 min of expiry should trigger refresh.\"\"\"\n-        near_exp_token = create_test_token(exp_minutes=3)\n-        response = client.get(\"/protected\", headers={\"Authorization\": f\"Bearer {near_exp_token}\"})\n-        assert response.status_code == 200\n-        assert \"X-Refreshed-Token\" in response.headers\n+    def test_invalid_signature_returns_401(self):\n+        response = client.get(\"/protected\", headers={\"Authorization\": \"Bearer bad.token.here\"})\n+        assert response.status_code == 401",
+  "comments": [
+    "carol: Looks clean! The v1 refresh logic was confusing. Good riddance. Approve.",
+    "dave: Wait — this removes the expiry check entirely, not just the refresh. Line 20 in the new code only validates the signature, it never checks `exp`. An expired token will now be accepted forever. This is a security regression.",
+    "carol: @dave good eye, I missed that. The description says 'no behavioral changes' but that's clearly wrong.",
+    "eve: Flagging for security review. The test for expired tokens was also deleted which hides the regression."
+  ],
+  "files_changed": [
+    "src/auth/middleware.py",
+    "tests/test_auth.py"
+  ],
+  "author": "mwilson",
+  "base_branch": "main",
+  "additions": 14,
+  "deletions": 31,
+  "contexts": {
+    "file_tree": "src/auth/\n├── __init__.py\n├── middleware.py         (modified)\n├── jwt_utils.py\n├── permissions.py\n└── session_store.py\ntests/\n├── test_auth.py          (modified)\n├── test_permissions.py\n└── test_session.py",
+    "ci_status": "CI Pipeline: ALL PASSED\n  ✓ lint (pylint) ........... 0 warnings\n  ✓ type-check (mypy) ...... passed\n  ✓ unit-tests (pytest) .... 41/41 passed (2 REMOVED)\n  ✓ integration-tests ...... 12/12 passed\n  ✓ coverage ............... 87.3% → 71.2% (-16.1%) ⚠️\n  NOTE: Coverage dropped significantly in src/auth/middleware.py\n  The two removed tests (test_expired_token_returns_401,\n  test_near_expiry_token_gets_refreshed) accounted for the drop.",
+    "git_blame": "src/auth/middleware.py:\n  Lines 8-35 (expiry check): security-team-bot (2 years ago)\n    Commit msg: 'CRITICAL: Add token expiry validation — fixes SEC-2024-017'\n    Referenced issue: SEC-2024-017 — 'Stolen tokens remain valid indefinitely'\n    This code was added in response to a P0 security incident where\n    a leaked JWT was used for 3 weeks before detection.",
+    "related_prs": "Related PRs:\n  PR #3201 (merged, 2 years ago): 'Add token expiry and refresh to auth middleware'\n    - Added by security team after incident SEC-2024-017\n    - PR description: 'Expired tokens MUST be rejected. This is a hard security\n      requirement from the security review. The grace window + refresh is for UX.'\n    - 4 approvals from security team leads\n    - Linked to compliance requirement AUTH-REQ-004",
+    "test_coverage": "Coverage report for src/auth/middleware.py:\n  Before: 87.3% (all branches covered including expiry checks)\n  After:  71.2% (expiry branch removed, no replacement coverage)\n  Deleted tests:\n    - test_expired_token_returns_401 (was testing critical security path)\n    - test_near_expiry_token_gets_refreshed (was testing UX grace window)\n  WARNING: Security-critical code paths now have ZERO test coverage."
+  },
+  "gold": {
+    "decision": "request_changes",
+    "labels": ["security", "breaking-change"],
+    "priority": "critical",
+    "gold_keywords": ["token expiry", "session", "security risk"],
+    "relevant_contexts": ["git_blame", "related_prs", "test_coverage"],
+    "depth_keywords": ["SEC-2024-017", "expired token", "_validate_token_signature", "exp"]
+  }
+}

@@ -1,0 +1,235 @@
+name: pr-review-env
+version: "2.0.0"
+description: >
+  A Pull Request Code Review Triage environment that simulates the real-world
+  workflow of reading PR diffs, gathering additional context (CI status, git
+  blame, related PRs, test coverage), evaluating reviewer comments, making
+  triage decisions, and writing review summaries. Supports multi-step
+  interaction where agents can request context before deciding. Features
+  5 tasks spanning easy to expert difficulty, testing an agent's ability
+  to identify security regressions, race conditions, incorrect documentation,
+  and resource leaks.
+author: pr-review-team
+tags:
+  - code-review
+  - pull-request
+  - triage
+  - software-engineering
+  - security
+  - concurrency
+  - multi-step
+  - context-gathering
+
+observation_space:
+  pr_id:
+    type: integer
+    description: Pull request identifier
+  title:
+    type: string
+    description: PR title
+  description:
+    type: string
+    description: PR description/body text
+  diff:
+    type: string
+    description: Unified diff with @@ headers (30-100+ lines)
+  comments:
+    type: array
+    items:
+      type: string
+    description: 2-6 inline reviewer comments
+  files_changed:
+    type: array
+    items:
+      type: string
+    description: List of changed file paths
+  author:
+    type: string
+    description: PR author username
+  base_branch:
+    type: string
+    description: Target branch for the PR
+  additions:
+    type: integer
+    description: Number of lines added
+  deletions:
+    type: integer
+    description: Number of lines deleted
+  current_step:
+    type: integer
+    description: Current step number in the episode
+  max_steps:
+    type: integer
+    description: Maximum allowed steps for the task
+  task_name:
+    type: string
+    description: Name of the current task
+  additional_context:
+    type: object
+    description: >
+      Accumulated context from request_context actions. Keys are context
+      type names, values are the context data strings. Starts empty and
+      grows as the agent requests more context.
+  available_contexts:
+    type: array
+    items:
+      type: string
+      enum: [file_tree, ci_status, git_blame, related_prs, test_coverage]
+    description: Context types still available to request
+
+action_space:
+  action_type:
+    type: string
+    enum: ["request_context", "review"]
+    description: >
+      Action type discriminator. "request_context" gathers additional
+      information (costs a step, returns no reward). "review" submits
+      the final triage decision (terminal, returns reward).
+  context_type:
+    type: string
+    enum: ["file_tree", "ci_status", "git_blame", "related_prs", "test_coverage"]
+    description: >
+      Context to request (required when action_type="request_context").
+      Each type reveals different information that may be critical for
+      making the correct triage decision.
+  decision:
+    type: string
+    enum: ["approve", "request_changes", "close"]
+    description: Triage decision for the PR (required when action_type="review")
+  labels:
+    type: array
+    items:
+      type: string
+      enum:
+        - bug
+        - security
+        - enhancement
+        - documentation
+        - breaking-change
+        - needs-tests
+        - trivial
+        - urgent
+        - performance
+        - memory-leak
+    description: Labels to apply to the PR (required when action_type="review")
+  priority:
+    type: string
+    enum: ["low", "medium", "high", "critical"]
+    description: Priority assessment for the PR (required when action_type="review")
+  review_summary:
+    type: string
+    description: >
+      1-3 sentence written review explaining the decision. Should reference
+      specific code concerns, function names, and technical details.
+      (required when action_type="review")
+
+tasks:
+  - id: easy
+    description: >
+      Trivial bugfix PR — off-by-one error in a Python list slicing utility.
+      Clean diff, clear description, unanimous reviewer approval.
+      No context gathering needed.
+    difficulty: easy
+    max_steps: 8
+    expected_score_range: [0.80, 1.00]
+
+  - id: medium
+    description: >
+      Security-sensitive auth middleware refactor that silently removes token
+      expiry checks. Misleading PR description claims no behavioral changes.
+      Split reviewer opinions. Context reveals the check was added for a
+      P0 security incident (SEC-2024-017).
+    difficulty: medium
+    max_steps: 8
+    expected_score_range: [0.50, 0.75]
+
+  - id: docs_api
+    description: >
+      API documentation update with subtly incorrect code examples. All
+      examples use deprecated v1 method names with v2-style parameters.
+      CI doc-tests fail. Requires checking CI status and understanding
+      the v1→v2 SDK migration.
+    difficulty: medium-hard
+    max_steps: 8
+    expected_score_range: [0.40, 0.70]
+
+  - id: hard
+    description: >
+      Contested rate limiter PR with a TOCTOU race condition in the Redis
+      INCR + EXPIRE pattern. Four reviewers disagree, author pushes back.
+      Misleading title. Context reveals a previous PR with the same approach
+      was rejected and an ADR prohibits non-atomic rate limiting.
+    difficulty: hard
+    max_steps: 8
+    expected_score_range: [0.20, 0.55]
+
+  - id: async_refactor
+    description: >
+      Async database refactor that introduces connection pool poisoning.
+      Old sync code had proper rollback-on-error that was lost in the refactor.
+      Under sustained errors, dirty connections poison the entire pool causing
+      cascading failures. Context reveals a previous production incident with
+      the exact same root cause and an ADR mandating transaction context managers.
+    difficulty: expert
+    max_steps: 10
+    expected_score_range: [0.15, 0.45]
+
+reward:
+  description: >
+    Dense reward function scoring along 6 independent weighted axes:
+    (1) decision_score (0.25) — exact match vs gold decision,
+    (2) label_score (0.20) — F1 between predicted and gold label sets,
+    (3) priority_score (0.15) — ordinal distance penalty,
+    (4) summary_score (0.15) — keyword coverage against gold keywords,
+    (5) context_efficiency_score (0.15) — F1 between requested and relevant contexts,
+    (6) reasoning_depth_score (0.10) — presence of task-specific technical terms.
+    Step penalty: -0.01 per step beyond step 1 (reduced from 0.02 to accommodate
+    multi-step context gathering). Fully deterministic — no LLM calls in the grader.
+  range: [0.0, 1.0]
+  step_penalty: 0.01
+  axes:
+    - name: decision_score
+      weight: 0.25
+      description: Binary — correct decision vs gold
+    - name: label_score
+      weight: 0.20
+      description: F1 between predicted and gold labels
+    - name: priority_score
+      weight: 0.15
+      description: Ordinal distance (exact=1.0, off-by-1=0.5, off-by-2=0.25)
+    - name: summary_score
+      weight: 0.15
+      description: Keyword coverage + length heuristic
+    - name: context_efficiency_score
+      weight: 0.15
+      description: F1 between requested contexts and task-relevant contexts
+    - name: reasoning_depth_score
+      weight: 0.10
+      description: Presence of specific technical terms showing deep analysis
+
+baseline_scores:
+  easy:
+    model: Qwen/Qwen2.5-72B-Instruct
+    score: 0.88
+    steps: 1
+    notes: Direct review without context gathering
+  medium:
+    model: Qwen/Qwen2.5-72B-Instruct
+    score: 0.65
+    steps: 4
+    notes: 3 context requests + review
+  docs_api:
+    model: Qwen/Qwen2.5-72B-Instruct
+    score: 0.58
+    steps: 3
+    notes: 2 context requests + review
+  hard:
+    model: Qwen/Qwen2.5-72B-Instruct
+    score: 0.42
+    steps: 4
+    notes: 3 context requests + review
+  async_refactor:
+    model: Qwen/Qwen2.5-72B-Instruct
+    score: 0.35
+    steps: 4
+    notes: 3 context requests + review
