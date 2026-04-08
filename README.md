@@ -1,3 +1,12 @@
+---
+title: PR Review Triage Environment
+emoji: 🔍
+colorFrom: blue
+colorTo: purple
+sdk: docker
+pinned: false
+---
+
 # PR Review Triage Environment (`pr-review-env`)
 
 > A multi-step OpenEnv environment that simulates the real-world workflow every engineering team does daily: reading pull request diffs, gathering additional context, evaluating reviewer comments, identifying security regressions and concurrency bugs, making triage decisions, and writing review summaries. Unlike single-turn code review tasks, this environment rewards agents that **gather relevant context before deciding** — just like a real senior engineer would check git blame, CI results, and related PRs before signing off on a change.

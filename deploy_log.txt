@@ -1,0 +1,47 @@
+﻿python : Traceback (most 
+recent call last):
+At line:1 char:1
++ python deploy.py 2>&1 | 
+Out-File -FilePath 
+deploy_log.txt -Encoding 
+u ...
++ ~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo        
+      : NotSpecified: (T  
+  raceback (most recent   
+  call last)::String)     
+[], RemoteException
+    + FullyQualifiedError 
+   Id : NativeCommandErr  
+  or
+ 
+  File "C:\Users\imthe\One
+Drive\Desktop\Meta AI\pr-r
+eview-env\deploy.py", 
+line 58, in <module>
+    main()
+    ~~~~^^
+  File "C:\Users\imthe\One
+Drive\Desktop\Meta AI\pr-r
+eview-env\deploy.py", 
+line 53, in main
+    print(f"\n\u2705 
+Deployed successfully!")
+    ~~~~~^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^
+  File "C:\Users\imthe\App
+Data\Local\Programs\Python
+\Python313\Lib\encodings\c
+p1252.py", line 19, in 
+encode
+    return codecs.charmap_
+encode(input,self.errors,e
+ncoding_table)[0]
+           ~~~~~~~~~~~~~~~
+~~~~~~^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^
+UnicodeEncodeError: 
+'charmap' codec can't 
+encode character '\u2705' 
+in position 2: character 
+maps to <undefined>
